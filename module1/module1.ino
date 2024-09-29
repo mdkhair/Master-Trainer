@@ -1,7 +1,7 @@
 #include "secrets.h"
 #include "esp_camera.h"
 #include <WiFiClientSecure.h>
-#include <MQTTClient.h>
+#include <PubSubClient.h>  
 #include <ArduinoJson.h>
 #include "WiFi.h"
 #include <base64.h>
@@ -9,29 +9,42 @@
 
 #define EEPROM_SIZE 1
 
-// camera definitions
+// Camera definitions
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
 
 // The MQTT topics that this device should publish/subscribe
-#define AWS_IOT_PUBLISH_TOPIC   "detectcat/pub"
-#define AWS_IOT_SUBSCRIBE_TOPIC "detectcat/sub"
+#define AWS_IOT_PUBLISH_TOPIC   "myespcam"
+#define AWS_IOT_SUBSCRIBE_TOPIC "myespcam"
 
 // HC-SR501 pin definition
 #define PIR_PIN 13  // Connect OUT of HC-SR501 to GPIO 13
 
+// LED pin definition
+#define LED_PIN 2   // LED on GPIO pin 2
+
+// Set up WiFiClientSecure and PubSubClient
 WiFiClientSecure net = WiFiClientSecure();
-MQTTClient client = MQTTClient(15000);
+PubSubClient client(net);
 
-void connectAWS() {
-  WiFi.mode(WIFI_STA);
+void connectWiFi() {
+  Serial.println("Connecting to Wi-Fi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  Serial.println("Connecting to Wi-Fi");
-
+  
+  // Try to connect to Wi-Fi
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+  }
+
+  // WiFi connected
+  Serial.println("\nConnected to Wi-Fi!");
+}
+
+void connectAWS() {
+  // Ensure we're connected to Wi-Fi first
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
   }
 
   // Configure WiFiClientSecure to use the AWS IoT device credentials
@@ -39,32 +52,31 @@ void connectAWS() {
   net.setCertificate(AWS_CERT_CRT);
   net.setPrivateKey(AWS_CERT_PRIVATE);
 
-  // Connect to the MQTT broker on the AWS endpoint we defined earlier
-  client.begin(AWS_IOT_ENDPOINT, 8883, net);
+  client.setServer(AWS_IOT_ENDPOINT, 8883);  // Set AWS IoT as the server
+  client.setCallback(messageHandler);
 
-  // Create a message handler
-  client.onMessage(messageHandler);
+  Serial.print("Connecting to AWS IoT...");
 
-  Serial.print("Connecting to AWS IOT");
-
-  while (!client.connect(THINGNAME)) {
-    Serial.print(".");
-    delay(100);
+  while (!client.connected()) {
+    if (client.connect(THINGNAME)) {
+      Serial.println("AWS IoT Connected!");
+      client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);  // Subscribe to the topic
+    } else {
+      Serial.print("AWS IoT Connection failed, client state: ");
+      Serial.print(client.state());
+      delay(2000);  // Wait for 2 seconds before retrying
+    }
   }
-
-  if (!client.connected()) {
-    Serial.println("AWS IoT Timeout!");
-    return;
-  }
-
-  // Subscribe to a topic
-  client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
-
-  Serial.println("AWS IoT Connected!");
 }
 
-void messageHandler(String &topic, String &payload) {
-  Serial.println("incoming: " + topic + " - " + payload);
+void messageHandler(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
 }
 
 void initCam() {
@@ -89,7 +101,7 @@ void initCam() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  
+
   if (psramFound()) {
     config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 10;
@@ -108,7 +120,7 @@ void initCam() {
 }
 
 void takePictureAndSubmit() {
-  // capture camera frame
+  // Capture camera frame
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
     Serial.println("Camera capture failed");
@@ -123,71 +135,40 @@ void takePictureAndSubmit() {
   DynamicJsonDocument doc(10000);
   doc["picture"] = encoded;
   String jsonBuffer;
-
   serializeJson(doc, jsonBuffer);
 
-  // Publishing the image to the MQTT topic
-  if (!client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer)) {
-    lwMQTTErr(client.lastError());
+  Serial.println(jsonBuffer);
+
+  // Ensure MQTT client is connected before publishing
+  if (!client.connected()) {
+    Serial.println("MQTT client not connected, reconnecting...");
+    connectAWS();  // Reconnect to AWS IoT
   }
-  Serial.println("Published");
+
+  // Publishing the image to the MQTT topic
+  if (!client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer.c_str())) {
+    Serial.print("Publish failed, client state: ");
+    Serial.println(client.state());
+  } else {
+    Serial.println("Published successfully");
+  }
 
   // Releasing the camera resource
   esp_camera_fb_return(fb);
 }
 
-void lwMQTTErr(lwmqtt_err_t reason) {
-  if (reason == lwmqtt_err_t::LWMQTT_SUCCESS)
-    Serial.print("Success");
-  else if (reason == lwmqtt_err_t::LWMQTT_BUFFER_TOO_SHORT)
-    Serial.print("Buffer too short");
-  else if (reason == lwmqtt_err_t::LWMQTT_VARNUM_OVERFLOW)
-    Serial.print("Varnum overflow");
-  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_CONNECT)
-    Serial.print("Network failed connect");
-  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_TIMEOUT)
-    Serial.print("Network timeout");
-  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_READ)
-    Serial.print("Network failed read");
-  else if (reason == lwmqtt_err_t::LWMQTT_NETWORK_FAILED_WRITE)
-    Serial.print("Network failed write");
-  else if (reason == lwmqtt_err_t::LWMQTT_REMAINING_LENGTH_OVERFLOW)
-    Serial.print("Remaining length overflow");
-  else if (reason == lwmqtt_err_t::LWMQTT_REMAINING_LENGTH_MISMATCH)
-    Serial.print("Remaining length mismatch");
-  else if (reason == lwmqtt_err_t::LWMQTT_MISSING_OR_WRONG_PACKET)
-    Serial.print("Missing or wrong packet");
-  else if (reason == lwmqtt_err_t::LWMQTT_CONNECTION_DENIED)
-    Serial.print("Connection denied");
-  else if (reason == lwmqtt_err_t::LWMQTT_FAILED_SUBSCRIPTION)
-    Serial.print("Failed subscription");
-  else if (reason == lwmqtt_err_t::LWMQTT_SUBACK_ARRAY_OVERFLOW)
-    Serial.print("Suback array overflow");
-  else if (reason == lwmqtt_err_t::LWMQTT_PONG_TIMEOUT)
-    Serial.print("Pong timeout");
-}
-
-void lwMQTTErrConnection(lwmqtt_return_code_t reason) {
-  if (reason == lwmqtt_return_code_t::LWMQTT_CONNECTION_ACCEPTED)
-    Serial.print("Connection Accepted");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_UNACCEPTABLE_PROTOCOL)
-    Serial.print("Unacceptable Protocol");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_IDENTIFIER_REJECTED)
-    Serial.print("Identifier Rejected");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_SERVER_UNAVAILABLE)
-    Serial.print("Server Unavailable");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_BAD_USERNAME_OR_PASSWORD)
-    Serial.print("Bad UserName/Password");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_NOT_AUTHORIZED)
-    Serial.print("Not Authorized");
-  else if (reason == lwmqtt_return_code_t::LWMQTT_UNKNOWN_RETURN_CODE)
-    Serial.print("Unknown Return Code");
-}
-
 void setup() {
   Serial.begin(9600);
+  
+  // Initialize pins
   pinMode(PIR_PIN, INPUT);  // Set PIR sensor pin as input
+  pinMode(LED_PIN, OUTPUT); // Set LED pin as output
+  
+  // Initialize the camera
   initCam();
+  
+  // Connect to Wi-Fi and AWS IoT
+  connectWiFi();
   connectAWS();
 }
 
@@ -195,9 +176,12 @@ void loop() {
   int motionDetected = digitalRead(PIR_PIN);  // Read the PIR sensor
 
   if (motionDetected == HIGH) {
-    Serial.println("Motion detected! Taking picture...");
-    takePictureAndSubmit();
-    delay(5000);  // Optional delay to avoid taking too many pictures in quick succession
+    Serial.println("Motion detected! Turning LED on and taking picture...");
+    digitalWrite(LED_PIN, HIGH);  // Turn on the LED
+    takePictureAndSubmit();       // Capture picture and submit to AWS IoT
+    delay(5000);                  // Optional delay to avoid too many pictures in quick succession
+  } else {
+    digitalWrite(LED_PIN, LOW);   // Turn off the LED when no motion is detected
   }
 
   client.loop();  // Keep MQTT connection alive
