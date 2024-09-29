@@ -94,8 +94,15 @@ void messageHandler(char* topic, byte* payload, unsigned int length) {
 }
 
 void publishToAWS(String cardID, String status, String ownerName = "") {
-  // Publish card scan details to AWS IoT Core
-  String message = "{\"cardID\":\"" + cardID + "\",\"status\":\"" + status + "\",\"owner\":\"" + ownerName + "\"}";
+  // If the card is unauthorized, send a different message
+  String message = "";
+  if (status == "authorized") {
+    message = "{\"cardID\":\"" + cardID + "\",\"status\":\"" + status + "\",\"owner\":\"" + ownerName + "\"}";
+  } else {
+    message = "{\"cardID\":\"" + cardID + "\",\"status\":\"" + status + "\",\"message\":\"Unauthorized Access\"}";
+  }
+
+  // Publish the message to AWS IoT
   client.publish(AWS_IOT_PUBLISH_TOPIC, message.c_str());
 }
 
