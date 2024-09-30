@@ -9,7 +9,7 @@
 #define FAN_PIN 5    // Fan connected to GPIO 5
 
 // MQ6 gas sensor pin definition
-#define MQ6_PIN A0  // MQ6 connected to analog pin A0
+#define MQ6_PIN 32  // MQ6 connected to analog pin 32
 
 // Threshold for gas detection (adjust based on your requirements)
 #define GAS_THRESHOLD 300
