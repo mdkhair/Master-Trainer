@@ -94,11 +94,13 @@ void messageHandler(char* topic, byte* payload, unsigned int length) {
 }
 
 void publishToAWS(String cardID, String status, String ownerName = "") {
-  // If the card is unauthorized, send a different message
-  String message = "";
+  String message;
+  // For authorized cards, include the owner's name in the message
   if (status == "authorized") {
     message = "{\"cardID\":\"" + cardID + "\",\"status\":\"" + status + "\",\"owner\":\"" + ownerName + "\"}";
-  } else {
+  } 
+  // For unauthorized cards, send a custom message indicating unauthorized access
+  else {
     message = "{\"cardID\":\"" + cardID + "\",\"status\":\"" + status + "\",\"message\":\"Unauthorized Access\"}";
   }
 
