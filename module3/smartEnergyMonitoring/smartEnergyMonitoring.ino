@@ -8,7 +8,7 @@
 #include <time.h>  // for timestamp
 
 // AWS IoT topic
-#define AWS_IOT_TOPIC "esp32/sub"
+#define AWS_IOT_TOPIC "topik/anda/sini"
 
 // Pin definitions
 #define DHTPIN 4
@@ -23,10 +23,10 @@ ZMPT101B voltageSensor(ZMPT101B_PIN, 50.0);
 
 // Constants
 const int mVperAmp = 100;     // Sensitivity for 20A version of ACS712
-int Watt = 0;
 double Voltage = 0;
 double VRMS = 0;
 double AmpsRMS = 0;
+int Watt = 0;
 
 // WiFi and MQTT objects
 WiFiClientSecure net = WiFiClientSecure();
@@ -106,14 +106,14 @@ float getVoltage()
   return Voltage;
 }
 
-// Function to read power consumption
-float getPower(float voltage, float current)
+// Function to calculate power consumption (Watt)
+int getPower(float voltage, float current)
 {
   return voltage * current;
 }
 
 // Function to publish data to AWS IoT
-void publishData(float temperature, float humidity, float voltage, float current, float power)
+void publishData(float temperature, float humidity, float voltage, float current, int power)
 {
   StaticJsonDocument<200> doc;
   doc["timestamp"] = getUnixTimestamp();  // Use Unix timestamp
@@ -121,7 +121,7 @@ void publishData(float temperature, float humidity, float voltage, float current
   doc["humidity"] = humidity;
   doc["voltage"] = voltage;
   doc["current"] = current;
-  doc["power"] = power;
+  doc["power"] = power;  // Publish the calculated Watt
 
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer);
@@ -177,7 +177,7 @@ void loop()
   // Read ACS712 and ZMPT101B values
   float voltage = getVoltage();
   float current = getCurrent();
-  float power = getPower(voltage, current);
+  Watt = getPower(voltage, current);  // Calculate power in Watts
 
   // Display values on the serial monitor
   Serial.print("Temperature: ");
@@ -197,11 +197,11 @@ void loop()
   Serial.println("A");
 
   Serial.print("Power: ");
-  Serial.print(power);
+  Serial.print(Watt);
   Serial.println("W");
 
   // Publish data to AWS IoT
-  publishData(temperature, humidity, voltage, current, power);
+  publishData(temperature, humidity, voltage, current, Watt);
 
   delay(1000);  // Wait 1 second before next reading
 }
